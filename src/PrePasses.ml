@@ -1664,6 +1664,32 @@ let decompose_global_accesses (crate : crate) (f : fun_decl) : fun_decl =
   in
   { f with body }
 
+(** Remove the bodies of the functions which are mapped to builtin definitions
+    in the backend libraries.
+
+    Those functions are extracted as the builtin definitions, not from their
+    bodies, so there is no point in translating the bodies: Charon may provide
+    them (e.g., with [--extract-opaque-bodies], or when translating the standard
+    library itself), and they often use features we don't support (raw pointers,
+    intrinsics, etc.) and would only generate errors. Removing them also makes
+    sure that the information we compute about the functions (e.g., whether they
+    can fail) comes from the builtin tables. *)
+let strip_builtin_bodies (crate : crate) : crate =
+  let open ExtractBuiltin in
+  let mctx = NameMatcher.ctx_from_crate crate in
+  let funs_map = builtin_funs_map () in
+  let fun_decls =
+    FunDeclId.Map.map
+      (fun (f : fun_decl) ->
+        if
+          body_is_translatable f.body
+          && NameMatcherMap.mem mctx f.item_meta.name funs_map
+        then { f with body = OpaqueBody }
+        else f)
+      crate.fun_decls
+  in
+  { crate with fun_decls }
+
 (** We do not support static regions yet.
 
     In order to support some printing functions, for now we update their
@@ -2417,6 +2443,7 @@ let apply_passes (crate : crate) : crate =
       in
       { f with body = ErrorBody { span = f.item_meta.span; msg } }
   in
+  let crate = strip_builtin_bodies crate in
   let fun_decls : fun_decl FunDeclId.Map.t =
     let num_decls = FunDeclId.Map.cardinal crate.fun_decls in
     ProgressBar.with_reporter num_decls "Applied prepasses: " (fun report ->

@@ -214,9 +214,14 @@ let analyze_module (m : crate) (funs_map : fun_decl FunDeclId.Map.t) :
       let builtin_info = get_builtin_info f in
       let has_builtin_info = builtin_info <> None in
       group_has_builtin_info := !group_has_builtin_info || has_builtin_info;
-      match f.body with
-      | StructuredBody body -> obj#visit_block body.body.span body.body
-      | TargetDispatchBody targets ->
+      match (builtin_info, f.body) with
+      | Some { can_fail }, _ ->
+          (* The function is extracted as the builtin, whatever its body
+             (Charon may provide one, e.g. with [--extract-opaque-bodies]):
+             the effects must be those of the builtin. *)
+          obj#may_fail can_fail
+      | None, StructuredBody body -> obj#visit_block body.body.span body.body
+      | None, TargetDispatchBody targets ->
           (* get_target can fail, and so can each target function *)
           obj#may_fail true;
           (* Also propagate effects from the target implementations *)
@@ -224,13 +229,7 @@ let analyze_module (m : crate) (funs_map : fun_decl FunDeclId.Map.t) :
             (fun ((_target_name : string), (fdr : Types.fun_decl_ref)) ->
               obj#visit_fid f.item_meta.span fdr.id)
             targets
-      | _ ->
-          let info_can_fail =
-            match builtin_info with
-            | None -> true
-            | Some { can_fail } -> can_fail
-          in
-          obj#may_fail info_can_fail
+      | None, _ -> obj#may_fail true
     in
     List.iter visit_fun d;
     (* We need to know if the declaration group contains a global - note that
